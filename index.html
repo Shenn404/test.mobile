@@ -408,7 +408,7 @@
     position:fixed;
     top:max(18px, env(safe-area-inset-top));
     right:calc(var(--frame-edge) + max(18px, env(safe-area-inset-right)));
-    z-index:999;
+    z-index:3500;
     display:flex;
     align-items:center;
     gap:10px;
@@ -470,12 +470,18 @@
     background:transparent;
     cursor:pointer;
     touch-action:pan-y;
+    --fill-pct:55%;
   }
-  /* Track */
+  /* Track — filled portion (left of the thumb) reads as purple/accent,
+     the rest stays a dim neutral line. Firefox gets this natively via
+     ::-moz-range-progress below; WebKit needs the gradient trick since
+     it has no equivalent pseudo-element. */
   .volume-slider::-webkit-slider-runnable-track{
     height:4px;
     border-radius:999px;
-    background:rgba(255,255,255,0.28);
+    background:linear-gradient(to right,
+      var(--accent) var(--fill-pct),
+      rgba(255,255,255,0.28) var(--fill-pct));
   }
   .volume-slider::-moz-range-track{
     height:4px;
@@ -1505,6 +1511,37 @@
   var sfxToggle = document.getElementById('sfx-toggle');
   var volumeSlider = document.getElementById('bgm-volume');
 
+  function updateVolumeFill(){
+    if(!volumeSlider) return;
+    volumeSlider.style.setProperty('--fill-pct', volumeSlider.value + '%');
+  }
+  updateVolumeFill();
+
+  /* Animates the slider's own visual position (there's no CSS transition
+     for a native range input's value, so we step it manually — same
+     technique as the audio fade above, kept in sync with it). */
+  var sliderAnimTimer = null;
+  function animateSliderTo(targetVal, durationMs){
+    if(!volumeSlider) return;
+    if(sliderAnimTimer){ clearInterval(sliderAnimTimer); sliderAnimTimer = null; }
+    var steps = 24;
+    var stepMs = durationMs / steps;
+    var start = Number(volumeSlider.value);
+    var diff = targetVal - start;
+    var i = 0;
+    sliderAnimTimer = setInterval(function(){
+      i++;
+      volumeSlider.value = Math.min(100, Math.max(0, start + diff * (i / steps)));
+      updateVolumeFill();
+      if(i >= steps){
+        clearInterval(sliderAnimTimer);
+        sliderAnimTimer = null;
+        volumeSlider.value = targetVal;
+        updateVolumeFill();
+      }
+    }, stepMs);
+  }
+
   function syncToggleUI(){
     if(!sfxToggle) return;
     sfxToggle.setAttribute('aria-pressed', String(sfxEnabled));
@@ -1518,14 +1555,13 @@
       if(sfxEnabled){
         /* If the volume was dragged down to zero earlier, restore a
            sensible level so turning the toggle back on is audible. */
-        if(AMBIENT_VOLUME <= 0){
-          AMBIENT_VOLUME = 0.55;
-          if(volumeSlider){ volumeSlider.value = '55'; }
-        }
+        if(AMBIENT_VOLUME <= 0){ AMBIENT_VOLUME = 0.55; }
         playWelcomeChime();
         startAmbient();
+        animateSliderTo(AMBIENT_VOLUME * 100, AMBIENT_FADE_MS);
       } else {
         stopAmbient();
+        animateSliderTo(0, AMBIENT_FADE_MS);
       }
     });
   }
@@ -1535,6 +1571,7 @@
      without losing the on/off toggle's own state — the two stay in sync. */
   if(volumeSlider){
     volumeSlider.addEventListener('input', function(){
+      updateVolumeFill();
       var val = Number(volumeSlider.value) / 100;
       AMBIENT_VOLUME = val;
 
@@ -1590,7 +1627,7 @@
       if(retryAttempt && typeof retryAttempt.catch === 'function'){ retryAttempt.catch(function(){}); }
     }
   }
-  ['pointerdown', 'keydown'].forEach(function(evt){
+  ['pointerdown', 'keydown', 'touchstart', 'click'].forEach(function(evt){
     window.addEventListener(evt, retryAmbientOnFirstGesture, { passive:true });
   });
 
